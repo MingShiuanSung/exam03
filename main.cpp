@@ -56,37 +56,24 @@ void FXOS8700CQ_readRegs(int addr, uint8_t * data, int len);
 
 void FXOS8700CQ_writeRegs(uint8_t * data, int len);
 
-int cnt = 0;
 //----------ACC------------------------------------------------------
 
-/*------------description---------------------------------------------
-open the publish_MQTT in terminal then it will show the ACC value and 
-transmit data to mqtt_client, next , open mqtt_client it will receive 
-the data and show the plotting.
-
---------------description---------------------------------------------*/
 
 RawSerial pc(USBTX, USBRX);
 
 RawSerial xbee(D12, D11);
 
-
-EventQueue queue(32 * EVENTS_EVENT_SIZE);
-
-Thread t;
-
-void xbee_rx_interrupt(void);
-
-void xbee_rx(void);
-
 void ACC(void);
 
-void status(Arguments *in, Reply *out);
+float vel_x = 0.0;
 
-RPCFunction rpc_status(&status, "status");
-
+float vel_y = 0.0;
 
 int main(){
+
+  EventQueue queue;
+
+  pc.baud(115200);
 
   // XBee setting
 
@@ -106,70 +93,19 @@ int main(){
 
   // start
 
-  t.start(callback(&queue, &EventQueue::dispatch_forever));
+  queue.call_every(100, ACC);   // call in every 100 millisec = 0.1 sec
 
-  // Setup a serial interrupt function of receiving data from xbee
-
-  xbee.attach(xbee_rx_interrupt, Serial::RxIrq);
-
-  ACC();
-
-}
-
-
-void xbee_rx_interrupt(void)
-
-{
-
-  xbee.attach(NULL, Serial::RxIrq); // detach interrupt
-
-  queue.call(&xbee_rx);
-
-}
-
-
-void xbee_rx(void)
-
-{
-
-  char buf[100] = {0};
-
-  char outbuf[3] = {0};
-
-  while (xbee.readable()){
-
-    for (int i=0; ; i++) {
-
-      char recv = xbee.getc();
-
-      if (recv == '\r') break;
-
-      buf[i] = recv;
-
-    }
-
-    RPC::call(buf, outbuf);
-
-    pc.printf("%s\r\n", outbuf);
-
-    xbee.printf("%s", outbuf);
-
-    wait(0.1);
-
-  }
-
-  xbee.attach(xbee_rx_interrupt, Serial::RxIrq); // reattach interrupt
-
+  queue.dispatch();
 }
 
 
 void ACC (void)
 {
 
-   pc.baud(115200);
    uint8_t who_am_i, value[2], res[6];
    int16_t acc16;
    float t[3];
+
 
    // Enable the FXOS8700Q
    FXOS8700CQ_readRegs( FXOS8700Q_CTRL_REG1, &value[1], 1);
@@ -180,8 +116,6 @@ void ACC (void)
    // Get the slave address
    FXOS8700CQ_readRegs(FXOS8700Q_WHOAMI, &who_am_i, 1);
 
-   while (true) 
-  {
    //---------------FXOS8700CQ--------------------------------------------
     FXOS8700CQ_readRegs(FXOS8700Q_OUT_X_MSB, res, 6);
 
@@ -213,37 +147,21 @@ void ACC (void)
 
     //------------------FXOS8700CQ-----------------------------------------
 
-    pc.printf("%1.4f\r\n%1.4f\r\n%1.4f\r\n", t[0], t[1], t[2]);
+    vel_x = float((t[0] * 9.8) * 0.1);   
 
-    ++cnt;
+    vel_y = float((t[1] * 9.8) * 0.1);
 
-    if (t[0] > 0.5 || t[0] < -0.5 || t[1] > 0.5 || t[1] < -0.5)
-      wait(0.1);
+    pc.printf("%1.4f\r\n%1.4f\r\n", vel_x, vel_y);
+
+    if (vel_x >= 0)
+      xbee.printf(" %1.4f", vel_x);
     else
-      wait(0.5);
-
-  }
-
-}
-
-void status (Arguments *in, Reply *out)   {
-
-    char outbuf[3];
-
-    if (cnt > 99) {
-      outbuf[0] = '9';
-      outbuf[1] = '9';
-      outbuf[2] = '\0';
-    }
-    else {
-      outbuf[0] = cnt / 10 + '0';
-      outbuf[1] = cnt - (cnt / 10) * 10 + '0';
-      outbuf[2] = '\0';
-    }
-
-    cnt = 0;
-
-    out->putData(outbuf);
+      xbee.printf("%1.4f", vel_x);
+    
+    if (vel_y >= 0)
+      xbee.printf(" %1.4f", vel_y);
+    else
+      xbee.printf("%1.4f", vel_y);
 
 }
 
